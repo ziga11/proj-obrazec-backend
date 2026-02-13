@@ -1,0 +1,40 @@
+export const mimeTypes: Record<string, string> = {
+	// Images
+	'.gif': 'image/gif',
+	'.webp': 'image/webp',
+	'.svg': 'image/svg+xml',
+	'.png': 'image/png',
+	'.jpg': 'image/jpeg',
+	'.jpeg': 'image/jpeg',
+
+	// Documents
+	'.pdf': 'application/pdf',
+	'.doc': 'application/msword',
+	'.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	'.xls': 'application/vnd.ms-excel',
+	'.ppt': 'application/vnd.ms-powerpoint',
+	'.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+
+	// Web
+	'.html': 'text/html',
+	'.css': 'text/css',
+	'.js': 'text/javascript',
+	'.json': 'application/json',
+	'.txt': 'text/plain',
+
+	// Archives
+	'.zip': 'application/zip',
+	'.rar': 'application/x-rar-compressed',
+	'.7z': 'application/x-7z-compressed',
+
+	// Audio
+	'.mp3': 'audio/mpeg',
+	'.wav': 'audio/wav',
+	'.ogg': 'audio/ogg',
+
+	// Video
+	'.mp4': 'video/mp4',
+	'.webm': 'video/webm',
+	'.ogv': 'video/ogg'
+};

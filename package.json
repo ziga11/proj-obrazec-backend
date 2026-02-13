@@ -1,0 +1,47 @@
+{
+	"name": "proj-obrazec-backend",
+	"version": "1.0.0",
+	"type": "module",
+	"description": "",
+	"main": "index.js",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ziga11/proj-obrazec-backend.git"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/ziga11/proj-obrazec-backend/issues"
+	},
+	"homepage": "https://github.com/ziga11/proj-obrazec-backend#readme",
+	"scripts": {
+		"dev": "tsx watch src/main.ts",
+		"build": "tsc",
+		"start": "node dist/main.js"
+	},
+	"dependencies": {
+		"connect-redis": "^9.0.0",
+		"dotenv": "^17.2.3",
+		"express": "^4.22.1",
+		"express-session": "^1.19.0",
+		"googleapis": "^169.0.0",
+		"multer": "^2.0.2",
+		"pg": "^8.16.3",
+		"redis": "^5.10.0",
+		"redis-mock": "^0.56.3"
+	},
+	"devDependencies": {
+		"@types/express": "^4.17.25",
+		"@types/express-session": "^1.18.2",
+		"@types/multer": "^2.0.0",
+		"@types/node": "^20.19.25",
+		"@types/pg": "^8.15.6",
+		"@types/redis-mock": "^0.17.3",
+		"tsx": "^4.21.0",
+		"typescript": "^5.9.3"
+	},
+	"overrides": {
+		"@types/express-serve-static-core": "^4.17.41"
+	}
+}

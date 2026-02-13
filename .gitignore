@@ -1,0 +1,5 @@
+.env
+.env.local
+node_modules
+proj-obrazec-83713fdf0128.json
+dist/
