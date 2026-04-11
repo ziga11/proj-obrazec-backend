@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import type { Account, Project } from './types.js';
+import { projectPermission, type Account, type Project } from './types.js';
 import pg, { PoolClient, QueryResult } from 'pg';
 type Pool = pg.Pool;
 
@@ -50,7 +50,7 @@ export class SQL {
                   RETURNING id
                 `, [project.title, project.creator_id, project.json]);
 
-                this.addUserToProject(project.creator_id, { account_id: result.rows[0].id });
+                this.addUserToProject(project.creator_id, projectPermission.All, { account_id: result.rows[0].id });
                 return result.rows[0]?.id;
         }
 
@@ -89,19 +89,23 @@ export class SQL {
                 );
         }
 
-        async projectList(): Promise<Array<Project>> {
-                const result = await this.client.query(`
-			SELECT 
-				p.id AS id,
-				p.title AS title,
-				a.id as creator_id,
-				p.date_created as date_created,
-				json->'osnovni_podatki' as json
-			FROM projektni_obrazec.project as p
-			JOIN projektni_obrazec.account a ON p.creator_id = a.id
-			ORDER BY
-				p.date_created
-		`);
+        async projectList(accountId: number): Promise<Array<Project>> {
+                const query = `
+                        SELECT
+                                p.id AS id,
+                                p.title AS title,
+                                p.creator_id as creator_id,
+                                p.date_created as date_created,
+                                json->'osnovni_podatki' as json,
+                                pal.permission_id as permisssion_id
+                        FROM projektni_obrazec.project_account_link as pal
+                        LEFT JOIN projektni_obrazec.project p
+                                ON p.id = pal.project_id
+                        WHERE pal.account_id = $1
+                        ORDER BY
+                                p.date_created`;
+
+                const result = await this.client.query(query, [accountId]);
 
                 const projArr: Array<Project> = [];
 
@@ -111,29 +115,32 @@ export class SQL {
                                 title: row.title,
                                 creator_id: row.creator_id,
                                 json: row.json,
-                                date_created: row.date_created
+                                date_created: row.date_created,
+                                permission_id: row.permission_id
                         } as Project);
                 }
 
                 return projArr;
         }
 
-        async fetchProject(projectId: number): Promise<Project> {
+        async fetchProject(projectId: number, accountId: number): Promise<Project> {
                 const result = await this.client.query(`
 			SELECT 
 				p.id AS id,
 				p.title AS title,
-				a.id as creator_id,
+				p.creator_id as creator_id,
 				p.date_created as date_created,
 				p.json as json,
-                                p.google_dir
+                                p.google_dir,
+                                pal.permission_id as permission_id
 			FROM projektni_obrazec.project as p
-			JOIN projektni_obrazec.account a
-				ON p.creator_id = a.id
+                        LEFT JOIN projektni_obrazec.project_account_link pal
+                                ON pal.project_id = p.id
 			WHERE
-				p.id = $1
+				p.id = $1 AND
+                                pal.account_id = $2
 			
-		`, [projectId]);
+		`, [projectId, accountId]);
 
                 const row = result.rows[0];
 
@@ -143,6 +150,7 @@ export class SQL {
                         creator_id: row.creator_id,
                         json: row.json,
                         google_dir: row.google_dir,
+                        permission_id: row.permission_id
                 } as Project;
         }
 
@@ -236,29 +244,54 @@ export class SQL {
                 } as Account;
         }
 
-        async authorizedAccounts(projectId: number): Promise<number[]> {
+        async authorizedAccounts(projectId: number): Promise<Array<{ account_id: number, permission_id: number }>> {
                 const query = `
-                        SELECT account_id
-                        FROM projektni_obrazec.project_account_link
+                        SELECT account_id, permission_id FROM projektni_obrazec.project_account_link
+                                WHERE project_id = $1;
+                    `;
+
+                const data = await this.client.query<{ account_id: number, permission_id: number }>(query, [projectId]);
+
+                return data.rows;
+        }
+
+
+        async addUserToProject(projectId: number, permissionId: number, { accountId, email }: { accountId?: number; email?: string } = {}): Promise<void> {
+                const query = `
+                        INSERT INTO projektni_obrazec.project_account_link(account_id, project_id, permission_id)
+                        SELECT 
+                            COALESCE($1::int, (SELECT id FROM projektni_obrazec.account WHERE email = $2)), $3, $4
+                        ON CONFLICT (account_id, project_id) DO NOTHING;
+                    `;
+
+                await this.client.query(query, [accountId ?? null, email ?? null, projectId, permissionId]);
+        }
+
+        async projectAccounts(projectId: number): Promise<Array<Account>> {
+                const query = `
+                        SELECT
+                                a.id,
+                                name,
+                                email,
+                                img_url,
+                                pal.permission_id
+                        FROM projektni_obrazec.account a
+                        JOIN projektni_obrazec.project_account_link pal ON
+                                pal.account_id = a.id
                         WHERE project_id = $1;
                     `;
 
-                const data = await this.client.query<{ account_id: number }>(query, [projectId]);
-
-                return data.rows.map((row) => row.account_id);
+                return (await this.client.query<Account>(query, [projectId])).rows;
         }
 
-        async addUserToProject(project_id: number, { account_id, email }: { account_id?: number; email?: string } = {}): Promise<void> {
+        async removeUserFromProject(projectId: number, accountId: number): Promise<void> {
                 const query = `
-                        INSERT INTO projektni_obrazec.project_account_link (account_id, project_id)
-                        SELECT 
-                            COALESCE($1::int, (SELECT id FROM account WHERE email = $2)), 
-                            $3
-                        ON CONFLICT (account_id, project_id) 
-                        DO NOTHING;
-                    `;
+                        DELETE FROM projektni_obrazec.project_account_link
+                        WHERE 
+                                account_id = $1 AND
+                                project_id = $2`;
 
-                await this.client.query(query, [account_id ?? null, email ?? null, project_id]);
+                await this.client.query(query, [accountId, projectId]);
         }
 }
 

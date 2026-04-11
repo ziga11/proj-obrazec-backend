@@ -8,6 +8,7 @@ export interface Project {
         date_created?: string;
         json?: Record<string, any>;
         google_dir?: string;
+        permission_id: number;
 }
 
 /**
@@ -30,4 +31,11 @@ export interface Form {
         date_modified: Date;
         parent_form_id: number | null;
         parent_heading_id: number | null;
+}
+
+
+export const projectPermission = {
+        View: 1,
+        Modify: 2,
+        All: 3,
 }

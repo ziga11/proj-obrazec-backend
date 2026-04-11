@@ -8,6 +8,7 @@ import multer from 'multer';
 import { googleDrive } from './drive.js';
 import { google } from 'googleapis';
 import { PoolClient } from 'pg';
+import { projectPermission } from './types.js';
 
 const PORT = process.env.PORT || "8080";
 const sql = new SQL();
@@ -42,13 +43,25 @@ const store = process.env.NODE_ENV === 'production'
 const app = express();
 app.use(express.json());
 app.use((req, res, next) => {
+        const allowedOrigins = [
+                'http://localhost:5173',
+                'https://proj-obrazec.vercel.app'
+        ];
+
         const origin = req.headers.origin;
-        res.header('Access-Control-Allow-Origin', origin);
+
+        if (allowedOrigins.includes(origin)) {
+                res.header('Access-Control-Allow-Origin', origin);
+        }
+        else {
+                console.log(origin);
+        }
+
         res.header('Access-Control-Allow-Credentials', 'true');
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        res.header('Cross-Origin-Resource-Policy', 'cross-origin');
-        res.header('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+
+        res.header('Vary', 'Origin');
 
         if (req.method === 'OPTIONS') {
                 return res.sendStatus(200);
@@ -70,33 +83,43 @@ app.use(session({
         }
 }));
 
+async function isAuthorized(projectId: number, accountId: number, permissionType: number): Promise<boolean> {
+        const authorizedAccounts = await sql.authorizedAccounts(projectId);
+
+        for (const acc of authorizedAccounts) {
+                if (acc.account_id != accountId) continue;
+
+                return permissionType >= acc.permission_id;
+        }
+
+        return false;
+}
+
+
 const checkAuthAndAuthorization = async (req, res, next) => {
         if (!req.session || !req.session.accId) {
-                console.log(req.session, req.session.accId);
+                console.log("unsuccessfull auth", req.session, req.session.accId);
                 return res.status(401).json({ error: 'UnAuthenticated' });
         }
 
         const projectId = Number(req.params.project_id || req.body.project_id || "-1");
 
         if (projectId !== -1) {
-                try {
-                        const authorizedAccs = await sql.authorizedAccounts(projectId);
+                const requiredPermission = endpointPermission(req.path);
+                const allowed = isAuthorized(projectId, Number(req.session.accId), requiredPermission)
 
-                        if (!authorizedAccs.includes(req.session.accId)) {
-                                return res.status(403).json({ error: 'Access to this project denied' });
-                        }
-                } catch (err) {
-                        console.error("Auth check error:", err);
-                        return res.status(500).json({ error: 'Internal server error during auth check' });
+                if (!allowed) {
+                        return res.status(403).json({ error: 'Access to this project feature denied' });
                 }
         }
 
         return next();
 };
 
-app.get('/api/project-list', checkAuthAndAuthorization, async (_, res) => {
+app.get('/api/project-list', checkAuthAndAuthorization, async (req, res) => {
         try {
-                const result = await sql.projectList();
+                const accId = req.session.accId;
+                const result = await sql.projectList(accId);
                 res.json(result);
         } catch (error) {
                 console.error('Database query error:', error);
@@ -107,8 +130,9 @@ app.get('/api/project-list', checkAuthAndAuthorization, async (_, res) => {
 app.get('/api/fetch-project/:project_id', checkAuthAndAuthorization, async (req, res) => {
         try {
                 const projectId = Number(req.params.project_id);
+                const accId = req.session.accId;
 
-                const result = await sql.fetchProject(projectId);
+                const result = await sql.fetchProject(projectId, accId);
 
                 res.json(result);
         } catch (error) {
@@ -235,10 +259,57 @@ app.get('/api/me', async (req, res) => {
         }
 });
 
+app.post('/api/add-account-to-project', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const { email, project_id, permission_id } = req.body;
+
+                await sql.addUserToProject(project_id, permission_id, { email: email });
+
+                res.sendStatus(200);
+        } catch (err) {
+                if (err instanceof Error && err.message.includes('null value in column "account_id"')) {
+                        res.status(400).json({ error: "User does not exist" });
+                } else {
+                        console.log(`Server error`, err);
+                        res.status(500).json({ error: "Server error" });
+                }
+        }
+});
+
+app.post('/api/remove-account-from-project', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const { account_id: accountId, project_id: projectId } = req.body;
+                console.log(accountId, projectId);
+
+                if (!accountId || !projectId) {
+                        return res.status(400).json({ error: "Missing required fields" });
+                }
+
+                await sql.removeUserFromProject(projectId, accountId);
+
+                res.sendStatus(200);
+        } catch (err) {
+                console.log(`Server error ${err}`);
+                res.status(500).json({ error: `Server error ${err}` });
+        }
+});
+
+app.get('/api/project-accounts/:project_id', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const projectId = Number(req.params.project_id);
+
+                const accs = await sql.projectAccounts(projectId);
+
+                res.json(accs);
+        } catch (err) {
+                res.status(500).json({ error: "Server error" });
+        }
+});
+
 app.post("/api/delete-project/:project_id", checkAuthAndAuthorization, async (req, res) => {
         try {
                 const projectId = Number(req.params.project_id);
-                const project = await sql.fetchProject(projectId);
+                const project = await sql.fetchProject(projectId, req.session.accId);
 
                 const savedToken = await sql.fetchToken("refresh_token");
                 if (!savedToken) {
@@ -269,6 +340,16 @@ app.post("/api/delete-project/:project_id", checkAuthAndAuthorization, async (re
                 res.status(500).json({ error: 'Failed to delete project!' });
         }
 })
+
+function endpointPermission(endpoint: string): number {
+        if (endpoint.includes("fetch-project")) {
+                return projectPermission.View;
+        }
+        else if (endpoint.includes("upsert-project")) {
+                return projectPermission.Modify;
+        }
+        return projectPermission.All;
+}
 
 app.use((_, res) => {
         res.status(404).send('404 Not Found');
