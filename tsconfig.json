@@ -4,6 +4,10 @@
                 "rootDir": "./src",
                 "module": "NodeNext",
                 "target": "ES2022",
+                "types": [
+                        "node",
+                        "express"
+                ],
                 "moduleResolution": "NodeNext",
                 "allowSyntheticDefaultImports": true,
                 "skipLibCheck": true
