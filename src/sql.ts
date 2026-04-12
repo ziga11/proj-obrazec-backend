@@ -50,7 +50,7 @@ export class SQL {
                   RETURNING id
                 `, [project.title, project.creator_id, project.json]);
 
-                this.addUserToProject(project.creator_id, projectPermission.All, { account_id: result.rows[0].id });
+                this.addUserToProject(project.creator_id, projectPermission.All, { accountId: result.rows[0].id });
                 return result.rows[0]?.id;
         }
 
