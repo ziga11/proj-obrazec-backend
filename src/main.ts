@@ -3,15 +3,13 @@ import session from 'express-session';
 import { createClient } from 'redis';
 import { RedisStore } from 'connect-redis';
 import RedisMock from 'redis-mock';
-import SQL from './sql.js';
 import multer from 'multer';
 import { googleDrive } from './drive.js';
 import { google } from 'googleapis';
-import { PoolClient } from 'pg';
-import { projectPermission } from './types.js';
+import { checkAuthAndAuthorization, processFiles } from './utils.js';
+import { sql } from './sql.js';
 
 const PORT = process.env.PORT || "8080";
-const sql = new SQL();
 
 
 const upload = multer({
@@ -29,7 +27,7 @@ let redisClient: any;
 if (process.env.NODE_ENV === 'production') {
         console.log("prod");
         redisClient = createClient({ url: process.env.REDIS_URL });
-        redisClient.connect().catch(console.error);
+        await redisClient.connect().catch(console.error);
 } else {
         console.log("creating redis mock");
         redisClient = RedisMock.createClient();
@@ -83,39 +81,6 @@ app.use(session({
         }
 }));
 
-async function isAuthorized(projectId: number, accountId: number, permissionType: number): Promise<boolean> {
-        const authorizedAccounts = await sql.authorizedAccounts(projectId);
-
-        for (const acc of authorizedAccounts) {
-                if (acc.account_id != accountId) continue;
-
-                return permissionType >= acc.permission_id;
-        }
-
-        return false;
-}
-
-
-const checkAuthAndAuthorization = async (req, res, next) => {
-        if (!req.session || !req.session.accId) {
-                console.log("unsuccessfull auth", req.session, req.session.accId);
-                return res.status(401).json({ error: 'UnAuthenticated' });
-        }
-
-        const projectId = Number(req.params.project_id || req.body.project_id || "-1");
-
-        if (projectId !== -1) {
-                const requiredPermission = endpointPermission(req.path);
-                const allowed = isAuthorized(projectId, Number(req.session.accId), requiredPermission)
-
-                if (!allowed) {
-                        return res.status(403).json({ error: 'Access to this project feature denied' });
-                }
-        }
-
-        return next();
-};
-
 app.get('/api/project-list', checkAuthAndAuthorization, async (req, res) => {
         try {
                 const accId = req.session.accId;
@@ -141,31 +106,6 @@ app.get('/api/fetch-project/:project_id', checkAuthAndAuthorization, async (req,
         }
 });
 
-async function processFiles(projectId: number, files: Express.Multer.File[], trx: PoolClient): Promise<number> {
-        if (!files || files.length === 0) return 0;
-
-        const savedToken = await sql.fetchToken("refresh_token", trx);
-        if (!savedToken) {
-                throw new Error('NOT_AUTHENTICATED');
-        }
-        googleDrive.setToken(savedToken);
-
-        const googleDirId = await googleDrive.fetchOrCreateDir(`${projectId}`);
-        await sql.setGoogleDir(projectId, googleDirId, trx);
-
-
-        const updates: { path: string[], id: string }[] = [];
-
-        for (const file of files) {
-                const response = await googleDrive.uploadFile(file, googleDirId);
-                const path = file.fieldname.split('.');
-                updates.push({ path, id: response.id });
-        }
-
-        await sql.updateFullJson(projectId, updates, trx);
-
-        return files.length;
-}
 
 app.post('/api/upsert-project', checkAuthAndAuthorization, upload.any(), async (req, res) => {
         try {
@@ -340,16 +280,6 @@ app.post("/api/delete-project/:project_id", checkAuthAndAuthorization, async (re
                 res.status(500).json({ error: 'Failed to delete project!' });
         }
 })
-
-function endpointPermission(endpoint: string): number {
-        if (endpoint.includes("fetch-project")) {
-                return projectPermission.View;
-        }
-        else if (endpoint.includes("upsert-project")) {
-                return projectPermission.Modify;
-        }
-        return projectPermission.All;
-}
 
 app.use((_, res) => {
         res.status(404).send('404 Not Found');

@@ -295,4 +295,4 @@ export class SQL {
         }
 }
 
-export default SQL;
+export const sql = new SQL();
