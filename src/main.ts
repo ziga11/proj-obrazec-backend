@@ -4,10 +4,10 @@ import { createClient } from 'redis';
 import { RedisStore } from 'connect-redis';
 import RedisMock from 'redis-mock';
 import multer from 'multer';
+import { sql } from './sql.js';
 import { googleDrive } from './drive.js';
 import { google } from 'googleapis';
 import { checkAuthAndAuthorization, processFiles } from './utils.js';
-import { sql } from './sql.js';
 
 const PORT = process.env.PORT || "8080";
 
@@ -187,6 +187,7 @@ app.get('/api/me', async (req, res) => {
 
         try {
                 const user = await sql.getOrCreateAcc({ accId: req.session.accId });
+                console.log("got or created user: ", user);
 
                 if (!user) {
                         req.session.destroy(null);
