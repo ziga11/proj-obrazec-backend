@@ -180,6 +180,8 @@ app.post('/api/auth/google-login', async (req, res) => {
 });
 
 app.get('/api/me', async (req, res) => {
+        console.log(req.session);
+        console.log(req.session.accId);
         if (!req.session || !req.session.accId) {
                 console.log("not authenticated --> api/me")
                 return res.status(401).json({ error: "Not authenticated" });
