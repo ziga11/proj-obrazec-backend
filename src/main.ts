@@ -26,7 +26,7 @@ const oauth2Client = new google.auth.OAuth2(
 let redisClient: any;
 if (process.env.NODE_ENV === 'production') {
         console.log("prod");
-        redisClient = createClient({ url: process.env.REDIS_URL });
+        redisClient = createClient({ url: process.env.REDIS_PRIVATE_DOMAIN });
         await redisClient.connect().catch(console.error);
 } else {
         console.log("creating redis mock");
