@@ -39,6 +39,7 @@ const store = process.env.NODE_ENV === 'production'
 
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use((req, res, next) => {
         const allowedOrigins = [
@@ -74,9 +75,9 @@ app.use(session({
         resave: false,
         saveUninitialized: false,
         cookie: {
+                sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
                 secure: process.env.NODE_ENV === "production",
                 httpOnly: true,
-                sameSite: 'lax',
                 maxAge: 1000 * 60 * 60 * 24
         }
 }));
