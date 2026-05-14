@@ -8,13 +8,15 @@ import { sql } from './sql.js';
 import { googleDrive } from './drive.js';
 import { google } from 'googleapis';
 import { checkAuthAndAuthorization, processFiles } from './utils.js';
+import cors from "cors"
+import { InsertNotification } from './types.js';
 
 const PORT = process.env.PORT || "8080";
 
 
 const upload = multer({
         storage: multer.memoryStorage(),
-        limits: { fileSize: 10 * 1024 * 1024 }
+        limits: { fileSize: 40 * 1024 * 1024 }
 });
 
 const oauth2Client = new google.auth.OAuth2(
@@ -39,35 +41,28 @@ const store = process.env.NODE_ENV === 'production'
 
 
 const app = express();
+const allowedOrigins = [
+        'http://localhost:5173',
+        'https://proj-obrazec.vercel.app'
+];
+
+app.use(cors({
+        origin: (origin, callback) => {
+                if (!origin) return callback(null, true);
+
+                if (allowedOrigins.includes(origin)) {
+                        callback(null, true);
+                } else {
+                        callback(new Error('CORS policy violation'), false);
+                }
+        },
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.set('trust proxy', 1);
 app.use(express.json());
-app.use((req, res, next) => {
-        const allowedOrigins = [
-                'http://localhost:5173',
-                'https://proj-obrazec.vercel.app'
-        ];
-
-        const origin = req.headers.origin;
-
-        if (allowedOrigins.includes(origin)) {
-                res.header('Access-Control-Allow-Origin', origin);
-        }
-        else {
-                console.log(origin);
-        }
-
-        res.header('Access-Control-Allow-Credentials', 'true');
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-        res.header('Vary', 'Origin');
-
-        if (req.method === 'OPTIONS') {
-                return res.sendStatus(200);
-        }
-
-        next();
-});
 
 app.use(session({
         store: store,
@@ -114,10 +109,14 @@ app.post('/api/upsert-project', checkAuthAndAuthorization, upload.any(), async (
                 const files = req.files as Express.Multer.File[];
 
                 const result = await sql.transaction(async (trx) => {
-                        const projectId = await sql.upsertProject(project, trx);
-                        const fileCount = await processFiles(projectId, files, trx);
-
-                        return { projectId, fileCount };
+                        try {
+                                const projectId = await sql.upsertProject(project, trx);
+                                const fileCount = await processFiles(projectId, files, trx);
+                                return { projectId, fileCount };
+                        } catch (err) {
+                                res.status(500).json({ "success": false })
+                                console.error(err)
+                        }
                 });
 
                 res.json({
@@ -181,8 +180,6 @@ app.post('/api/auth/google-login', async (req, res) => {
 });
 
 app.get('/api/me', async (req, res) => {
-        console.log(req.session);
-        console.log(req.session.accId);
         if (!req.session || !req.session.accId) {
                 console.log("not authenticated --> api/me")
                 return res.status(401).json({ error: "Not authenticated" });
@@ -190,8 +187,6 @@ app.get('/api/me', async (req, res) => {
 
         try {
                 const user = await sql.getOrCreateAcc({ accId: req.session.accId });
-                console.log("got or created user: ", user);
-
                 if (!user) {
                         req.session.destroy(null);
                         return res.status(401).json({ error: "User not found" });
@@ -209,21 +204,77 @@ app.post('/api/add-account-to-project', checkAuthAndAuthorization, async (req, r
 
                 await sql.addUserToProject(project_id, permission_id, { email: email });
 
-                res.sendStatus(200);
+                res.status(200).json({ success: true });
         } catch (err) {
                 if (err instanceof Error && err.message.includes('null value in column "account_id"')) {
                         res.status(400).json({ error: "User does not exist" });
                 } else {
                         console.log(`Server error`, err);
-                        res.status(500).json({ error: "Server error" });
+                        res.status(500).json({ error: `Server error: ${err}` });
                 }
         }
+});
+
+app.post('/api/send-notification', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const n = req.body as InsertNotification;
+
+                console.log(n);
+
+                await sql.sendNotification(n)
+
+                res.status(200).json({ success: true });
+        } catch (err) {
+                console.log(err);
+        }
+        /*         res.status(200).json({ success: true }); */
+});
+
+app.post('/api/notification-response', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const { notification_id, state } = req.body;
+
+                const result = await sql.notificationResponse(notification_id, state);
+                const accId = req.session.accId;
+
+                if (state == "Accepted" && result.metadata.length > 0) {
+                        const metadataObj = JSON.parse(result.metadata);
+                        await sql.addUserToProject(metadataObj.project_id, metadataObj.permission, { accountId: accId });
+
+                        const user = await sql.getAccById(accId);
+                        const project = await sql.getProjectById(metadataObj.project_id);
+                        await sql.sendNotification({
+                                content: `User ${user.name} (${user.email}) has accepted your invitation to the project ${project.title}`,
+                                from_acc_id: accId,
+                                to_acc_id: result.from_acc_id,
+                                type: "message",
+                        } as InsertNotification);
+                }
+
+                res.status(200).json({ success: true });
+        } catch (err) {
+                console.log(err);
+                res.status(500).json({ error: `Failed to process notification resposne ${err}` });
+        }
+});
+
+app.post('/api/list-notifications', checkAuthAndAuthorization, async (req, res) => {
+        try {
+                const accId = Number(req.session.accId);
+
+                const notifications = await sql.fetchNotifications(accId);
+
+                res.json(notifications);
+        } catch (err) {
+                console.log(err);
+                res.status(500).json({ error: `Failed to fetch notifications ${err}` });
+        }
+        /*         res.status(200).json({ success: true }); */
 });
 
 app.post('/api/remove-account-from-project', checkAuthAndAuthorization, async (req, res) => {
         try {
                 const { account_id: accountId, project_id: projectId } = req.body;
-                console.log(accountId, projectId);
 
                 if (!accountId || !projectId) {
                         return res.status(400).json({ error: "Missing required fields" });

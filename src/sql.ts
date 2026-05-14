@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { projectPermission, type Account, type Project } from './types.js';
+import { ClientNotification, InsertNotification, projectPermission, type Account, type Project } from './types.js';
 import pg, { PoolClient, QueryResult } from 'pg';
 type Pool = pg.Pool;
 
@@ -12,7 +12,8 @@ export class SQL {
                         ssl: { rejectUnauthorized: false },
                         max: 1,
                         idleTimeoutMillis: 30000,
-                        connectionTimeoutMillis: 5000,
+                        connectionTimeoutMillis: 60000,
+                        statement_timeout: 90000
                 });
 
                 this.client.on('error', (err) => {
@@ -50,8 +51,9 @@ export class SQL {
                   RETURNING id
                 `, [project.title, project.creator_id, project.json]);
 
-                this.addUserToProject(project.creator_id, projectPermission.All, { accountId: result.rows[0].id });
-                return result.rows[0]?.id;
+                const projId = result.rows[0].id
+                this.addUserToProject(projId, projectPermission.All, { accountId: project.creator_id });
+                return projId;
         }
 
         setNestedValue(obj: any, path: string[], value: any) {
@@ -97,7 +99,7 @@ export class SQL {
                                 p.creator_id as creator_id,
                                 p.date_created as date_created,
                                 json->'osnovni_podatki' as json,
-                                pal.permission_id as permisssion_id
+                                pal.permission_id as permission_id
                         FROM projektni_obrazec.project_account_link as pal
                         LEFT JOIN projektni_obrazec.project p
                                 ON p.id = pal.project_id
@@ -106,21 +108,7 @@ export class SQL {
                                 p.date_created`;
 
                 const result = await this.client.query(query, [accountId]);
-
-                const projArr: Array<Project> = [];
-
-                for (const row of result.rows) {
-                        projArr.push({
-                                id: row.id,
-                                title: row.title,
-                                creator_id: row.creator_id,
-                                json: row.json,
-                                date_created: row.date_created,
-                                permission_id: row.permission_id
-                        } as Project);
-                }
-
-                return projArr;
+                return result.rows.map(row => row as Project);
         }
 
         async fetchProject(projectId: number, accountId: number): Promise<Project> {
@@ -189,6 +177,27 @@ export class SQL {
 			ON CONFLICT (type)
 			    DO UPDATE
 				SET token = EXCLUDED.token`, [token, type]);
+        }
+
+        async getAccById(accId: number): Promise<Account> {
+                const query = `SELECT * FROM projektni_obrazec.account WHERE id = $1`
+
+                return (await this.client.query(query, [accId])).rows[0] as Account;
+        }
+
+        async getProjectById(projId: number): Promise<Project> {
+                const query = `SELECT
+                                        id AS id,
+                                        title AS title,
+                                        creator_id as creator_id,
+                                        date_created as date_created,
+                                        json->'osnovni_podatki' as json
+                                FROM projektni_obrazec.project
+                                WHERE id = $1`;
+
+                const result = await this.client.query(query, [projId])
+
+                return result.rows[0] as Project;
         }
 
         async getOrCreateAcc({
@@ -265,6 +274,62 @@ export class SQL {
                     `;
 
                 await this.client.query(query, [accountId ?? null, email ?? null, projectId, permissionId]);
+        }
+
+        async sendNotification(notification: InsertNotification): Promise<void> {
+                const query = `
+                        INSERT INTO projektni_obrazec.notification(content, from_acc_id, to_acc_id, type, metadata)
+                        SELECT 
+                            $1, $2,
+                            COALESCE($3::int,
+                                (SELECT id FROM projektni_obrazec.account WHERE email = $4)
+                            ),
+                            $5, $6
+                        ON CONFLICT (from_acc_id, metadata, state) DO NOTHING;
+                    `;
+
+                await this.client.query(query,
+                        [notification.content,
+                        notification.from_acc_id,
+                        notification.to_acc_id,
+                        notification.to_acc_email ?? null,
+                        notification.type,
+                        notification.metadata]);
+        }
+
+        async fetchNotifications(accountId: number): Promise<Array<ClientNotification>> {
+                const query = `
+                        SELECT
+                            n.id as id,
+                            n.content as content,
+                            n.type as type,
+                            n.state as state,
+                            n.created_at as created_at,
+                            to_jsonb(a) as from_acc
+                        FROM projektni_obrazec.notification n
+                        LEFT JOIN projektni_obrazec.account a ON n.from_acc_id = a.id
+                        WHERE n.to_acc_id = $1 AND hidden = 'false'`;
+
+                const result = await this.client.query(query, [accountId]);
+
+                return result.rows;
+        }
+
+        async deleteNotification(notificationId: number) {
+                const query = `DELETE FROM projektni_obrazec.notification WHERE id = $1`
+                await this.client.query(query, [notificationId]);
+        }
+
+        async notificationResponse(notificationId: number, state: string): Promise<any> {
+                const query = `UPDATE projektni_obrazec.notification
+                                   SET state = $2,
+                                       hidden = 'true'
+                                WHERE id = $1
+                                RETURNING from_acc_id, metadata`
+
+                const result = await this.client.query(query, [notificationId, state]);
+
+                return result.rows[0];
         }
 
         async projectAccounts(projectId: number): Promise<Array<Account>> {

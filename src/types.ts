@@ -33,9 +33,28 @@ export interface Form {
         parent_heading_id: number | null;
 }
 
+export interface InsertNotification {
+        id?: number;
+        from_acc_id: number;
+        to_acc_id?: number;
+        to_acc_email?: string;
+        metadata?: string;
+        type: string;
+        content: string;
+}
+
+export interface ClientNotification {
+        id: number;
+        from_acc: Account;
+        type: string;
+        content: string;
+        state: string;
+        created_at: Date;
+}
 
 export const projectPermission = {
         View: 1,
         Modify: 2,
         All: 3,
 }
+
